@@ -13,6 +13,20 @@ function round2(value: number): number {
   return Number(value.toFixed(2));
 }
 
+function makeQuickHelp(): string {
+  return [
+    "Как пользоваться:",
+    "1) Жди сигнал с кнопками.",
+    "2) Повторил -> отправь /fill или /fillsum.",
+    "3) Игнор -> просто пропуск сигнала.",
+    "",
+    "Команды:",
+    "/fill <signalId> <price> <qty>",
+    "/fillsum <signalId> <price> <amountRub>",
+    "/testsignal"
+  ].join("\n");
+}
+
 export class SignalBot {
   private readonly bot: Telegraf;
   private readonly accessPassword: string;
@@ -40,7 +54,7 @@ export class SignalBot {
     this.bot.start(async (ctx) => {
       const chatId = ctx.chat?.id;
       if (this.isAuthorized(chatId)) {
-        await ctx.reply("Бот активен. Жди сигналы и отвечай кнопками: Повторил/Игнор.");
+        await ctx.reply(`Бот активен.\n${makeQuickHelp()}`);
         return;
       }
       await ctx.reply("Доступ закрыт. Введи пароль: /auth <password>");
@@ -67,7 +81,15 @@ export class SignalBot {
         return;
       }
       this.db.upsertAuthorizedChat(String(chatId), ctx.from?.username);
-      await ctx.reply("Доступ выдан. Теперь ты будешь получать сигналы.");
+      await ctx.reply(`Доступ выдан.\n${makeQuickHelp()}`);
+    });
+
+    this.bot.command("help", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.reply("Нет доступа. Сначала: /auth <password>");
+        return;
+      }
+      await ctx.reply(makeQuickHelp());
     });
 
     this.bot.action(/^repeat:(\d+)$/, async (ctx) => {
@@ -78,7 +100,13 @@ export class SignalBot {
       const signalId = Number(ctx.match[1]);
       await ctx.answerCbQuery();
       await ctx.reply(
-        `Введи фактическую цену и объем: /fill ${signalId} <price> <qty>\nПример: /fill ${signalId} 123.45 10`
+        [
+          "Как зафиксировать повтор:",
+          `- По объему: /fill ${signalId} <price> <qty>`,
+          `  Пример: /fill ${signalId} 123.45 10`,
+          `- По сумме в рублях: /fillsum ${signalId} <price> <amountRub>`,
+          `  Пример: /fillsum ${signalId} 123.45 10000`
+        ].join("\n")
       );
     });
 
@@ -131,6 +159,46 @@ export class SignalBot {
       await ctx.reply(`Сигнал #${signalId}: повтор подтвержден по цене ${manualPrice}, объем ${manualQty}`);
     });
 
+    this.bot.command("fillsum", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.reply("Нет доступа. Сначала: /auth <password>");
+        return;
+      }
+      const msg = ctx.message;
+      if (!msg || !("text" in msg)) {
+        return;
+      }
+      const parts = msg.text.trim().split(/\s+/);
+      if (parts.length < 4) {
+        await ctx.reply("Формат: /fillsum <signalId> <price> <amountRub>");
+        return;
+      }
+      const signalId = Number(parts[1]);
+      const manualPrice = Number(parts[2]);
+      const amountRub = Number(parts[3]);
+      if (!Number.isFinite(signalId) || !Number.isFinite(manualPrice) || !Number.isFinite(amountRub)) {
+        await ctx.reply("Ошибка формата. Пример: /fillsum 12 123.45 10000");
+        return;
+      }
+      if (manualPrice <= 0 || amountRub <= 0) {
+        await ctx.reply("Цена и сумма должны быть больше 0.");
+        return;
+      }
+      const manualQty = amountRub / manualPrice;
+
+      this.db.recordAction({
+        signalId,
+        action: "repeat",
+        actionTime: new Date().toISOString(),
+        manualPrice,
+        manualQty
+      });
+      this.analytics.runPendingCalculations();
+      await ctx.reply(
+        `Сигнал #${signalId}: повтор подтвержден по цене ${manualPrice}, сумма ${round2(amountRub)} RUB, объем ${round2(manualQty)}`
+      );
+    });
+
     this.bot.command("testsignal", async (ctx) => {
       if (!this.isAuthorized(ctx.chat?.id)) {
         await ctx.reply("Нет доступа. Сначала: /auth <password>");
@@ -160,7 +228,9 @@ export class SignalBot {
       `${signal.ticker} | ${signal.side.toUpperCase()}`,
       `Цена сигнала: ${round2(signal.signalPrice)}`,
       `Объем сигнала: ${signal.signalQty}`,
-      `Рекомендованный объем: ${recommendedQty}`
+      `Рекомендованный объем: ${recommendedQty}`,
+      "",
+      "Нажми: Повторил / Игнор"
     ].join("\n");
 
     await this.bot.telegram.sendMessage(
