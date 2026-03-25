@@ -9,6 +9,7 @@ import { TinkoffDealsSource } from "./sources/tinkoff-placeholder.js";
 import { SandboxDealsSource } from "./sources/sandbox.js";
 import { AnalyticsService } from "./analytics.js";
 import type { DealSignal } from "./types.js";
+import { logger } from "./logger.js";
 
 const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1),
@@ -25,10 +26,12 @@ const envSchema = z.object({
   DAILY_DIGEST_CRON: z.string().default("0 21 * * *"),
   MAIN_ACCOUNT_VALUE: z.coerce.number().default(1000000),
   MIRROR_ACCOUNT_VALUE: z.coerce.number().default(100000),
-  COMMISSION_RATE: z.coerce.number().default(0.2)
+  COMMISSION_RATE: z.coerce.number().default(0.2),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info")
 });
 
 const env = envSchema.parse(process.env);
+const appLogger = logger.child({ module: "index" });
 
 function maskSecret(value: string, keep = 4): string {
   if (value.length <= keep * 2) {
@@ -45,12 +48,15 @@ function makeSource(): DealsSource {
     if (!env.TINKOFF_TOKEN) {
       throw new Error("SOURCE_MODE=tinkoff требует TINKOFF_TOKEN");
     }
-    console.log(`[tinkoff] token loaded: ${maskSecret(env.TINKOFF_TOKEN)}`);
-    console.log("[tinkoff] token source: .env -> TINKOFF_TOKEN");
+    appLogger.info("tinkoff.token_loaded", "Tinkoff token loaded from env", {
+      tokenMask: maskSecret(env.TINKOFF_TOKEN)
+    });
     if (env.TINKOFF_ACCOUNT_ID) {
-      console.log(`[tinkoff] accountId from env: ${env.TINKOFF_ACCOUNT_ID}`);
+      appLogger.info("tinkoff.account_configured", "Account id configured via env", {
+        accountId: env.TINKOFF_ACCOUNT_ID
+      });
     } else {
-      console.log("[tinkoff] accountId not set, will auto-pick first active account");
+      appLogger.info("tinkoff.account_auto_pick", "Account id not set, source will auto-pick active account");
     }
     return new TinkoffDealsSource(env.TINKOFF_TOKEN, {
       accountId: env.TINKOFF_ACCOUNT_ID,
@@ -108,21 +114,21 @@ async function main() {
     }
   }
 
-  console.log("[boot] launching bot...");
+  appLogger.info("boot.launch_bot", "Launching telegram bot", { source: source.getName() });
   void bot.launch()
-    .then(() => console.log(`[boot] bot launched, source=${source.getName()}`))
-    .catch((err) => console.error("[boot] bot launch failed:", err));
-  console.log(`[boot] poll interval seconds=${env.POLL_SECONDS}`);
+    .then(() => appLogger.info("boot.bot_launched", "Telegram bot launched", { source: source.getName() }))
+    .catch((err) => appLogger.error("boot.bot_launch_failed", "Telegram bot failed to launch", { error: err }));
+  appLogger.info("boot.poll_interval", "Poll interval configured", { pollSeconds: env.POLL_SECONDS });
 
   const processDealsOnce = async (origin: string) => {
     try {
       const deals = await source.pollNewDeals();
-      console.log(`[${origin}] deals=${deals.length}`);
+      appLogger.info("poll.fetched", "Fetched deals from source", { origin, dealsCount: deals.length, source: source.getName() });
       for (const deal of deals) {
         await createAndSendSignal(deal);
       }
     } catch (err) {
-      console.error("[poll] failed:", err);
+      appLogger.error("poll.failed", "Failed to poll deals", { origin, error: err, source: source.getName() });
     }
   };
 
@@ -136,23 +142,27 @@ async function main() {
       analytics.runPendingCalculations();
       await bot.sendDailyDigestToAuthorizedChats();
     } catch (err) {
-      console.error("[digest] failed:", err);
+      appLogger.error("digest.failed", "Failed to send daily digest", { error: err });
     }
   });
 
   process.once("SIGINT", async () => {
+    appLogger.warn("shutdown.sigint", "Received SIGINT, stopping services");
     clearInterval(pollTimer);
     await bot.stop();
+    db.close();
     process.exit(0);
   });
   process.once("SIGTERM", async () => {
+    appLogger.warn("shutdown.sigterm", "Received SIGTERM, stopping services");
     clearInterval(pollTimer);
     await bot.stop();
+    db.close();
     process.exit(0);
   });
 }
 
 main().catch((err) => {
-  console.error(err);
+  appLogger.error("boot.fatal", "Application terminated with fatal error", { error: err });
   process.exit(1);
 });

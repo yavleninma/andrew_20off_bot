@@ -3,6 +3,7 @@ import { InstrumentIdType } from "tinkoff-invest-api/dist/generated/instruments.
 import { OperationState, OperationType } from "tinkoff-invest-api/dist/generated/operations.js";
 import type { DealSignal } from "../types.js";
 import type { DealsSource } from "./base.js";
+import { logger } from "../logger.js";
 
 type TinkoffSourceConfig = {
   accountId?: string;
@@ -46,6 +47,7 @@ function toSide(type: OperationType): "buy" | "sell" | null {
 export class TinkoffDealsSource implements DealsSource {
   private readonly api: TinkoffInvestApi;
   private readonly cfg: TinkoffSourceConfig;
+  private readonly log = logger.child({ module: "source.tinkoff" });
   private accountId?: string;
   private cursor = "";
   private initialized = false;
@@ -75,6 +77,9 @@ export class TinkoffDealsSource implements DealsSource {
       throw new Error("Не удалось найти активный счет в Tinkoff API");
     }
     this.accountId = activeAccount.id;
+    this.log.info("tinkoff.account_selected", "Selected active account from API", {
+      accountId: activeAccount.id
+    });
     return activeAccount.id;
   }
 
@@ -158,7 +163,10 @@ export class TinkoffDealsSource implements DealsSource {
         signalTime: (item.date ?? new Date()).toISOString()
       });
     }
-
+    this.log.info("tinkoff.poll_complete", "Polled and transformed operations", {
+      fetchedItems: items.length,
+      emittedDeals: out.length
+    });
     return out;
   }
 }

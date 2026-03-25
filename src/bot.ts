@@ -2,6 +2,7 @@ import { Markup, Telegraf } from "telegraf";
 import type { AppDb } from "./db.js";
 import type { DealSignal } from "./types.js";
 import type { AnalyticsService } from "./analytics.js";
+import { logger } from "./logger.js";
 
 type BotConfig = {
   token: string;
@@ -31,6 +32,7 @@ export class SignalBot {
   private readonly bot: Telegraf;
   private readonly accessPassword: string;
   private readonly onTestSignal?: () => Promise<void>;
+  private readonly log = logger.child({ module: "bot" });
 
   constructor(
     cfg: BotConfig,
@@ -77,10 +79,18 @@ export class SignalBot {
       }
       const candidate = parts[1];
       if (candidate !== this.accessPassword) {
+        this.log.warn("auth.failed", "Authorization failed due to wrong password", {
+          chatId: String(chatId),
+          username: ctx.from?.username
+        });
         await ctx.reply("Неверный пароль.");
         return;
       }
       this.db.upsertAuthorizedChat(String(chatId), ctx.from?.username);
+      this.log.info("auth.success", "Chat authorized successfully", {
+        chatId: String(chatId),
+        username: ctx.from?.username
+      });
       await ctx.reply(`Доступ выдан.\n${makeQuickHelp()}`);
     });
 
@@ -263,9 +273,18 @@ export class SignalBot {
     for (const chatId of chatIds) {
       try {
         await this.sendSignal(chatId, signal, signalId);
-        console.log(`[tg] sent signal #${signalId} to chat ${chatId}`);
+        this.log.info("telegram.signal_sent", "Signal sent to authorized chat", {
+          chatId,
+          signalId,
+          ticker: signal.ticker,
+          side: signal.side
+        });
       } catch (err) {
-        console.error(`[tg] failed to send signal #${signalId} to chat ${chatId}:`, err);
+        this.log.error("telegram.signal_send_failed", "Failed to send signal to chat", {
+          chatId,
+          signalId,
+          error: err
+        });
       }
     }
   }

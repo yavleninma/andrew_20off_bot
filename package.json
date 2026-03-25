@@ -5,7 +5,13 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke": "tsx src/smoke.ts",
+    "start": "node dist/index.js",
+    "docker:dev": "docker compose --profile dev up --build",
+    "docker:prod": "docker compose --profile prod up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f bot"
   },
   "keywords": [],
   "author": "",

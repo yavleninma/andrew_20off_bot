@@ -108,7 +108,13 @@ export class AppDb {
       INSERT INTO actions (signalId, userAction, manualPrice, manualQty, actionTime)
       VALUES (@signalId, @action, @manualPrice, @manualQty, @actionTime)
     `);
-    actionStmt.run(input);
+    actionStmt.run({
+      signalId: input.signalId,
+      action: input.action,
+      actionTime: input.actionTime,
+      manualPrice: input.manualPrice ?? null,
+      manualQty: input.manualQty ?? null
+    });
 
     const status = input.action === "repeat" ? "repeated" : "ignored";
     this.db
@@ -229,5 +235,9 @@ export class AppDb {
       .prepare("SELECT chatId FROM authorized_chats")
       .all() as Array<{ chatId: string }>;
     return rows.map((row) => row.chatId);
+  }
+
+  close(): void {
+    this.db.close();
   }
 }

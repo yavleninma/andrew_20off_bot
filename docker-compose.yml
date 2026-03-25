@@ -1,0 +1,33 @@
+services:
+  bot:
+    image: ${BOT_IMAGE:-andrew_20off_bot:local}
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: andrew-20off-bot
+    env_file:
+      - .env
+    command: npm run start
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    profiles:
+      - prod
+
+  bot-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: andrew-20off-bot-dev
+    env_file:
+      - .env
+    command: npm run dev
+    restart: unless-stopped
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+    profiles:
+      - dev
