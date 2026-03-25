@@ -10,21 +10,35 @@ type BotConfig = {
   onTestSignal?: () => Promise<void>;
 };
 
+type PendingManualEntry = {
+  signalId: number;
+  mode: "qty" | "sum";
+};
+
 function round2(value: number): number {
   return Number(value.toFixed(2));
 }
 
+function formatRub(value: number): string {
+  return `${round2(value)} руб.`;
+}
+
+function parseLocaleNumber(raw: string): number {
+  return Number(raw.replace(",", "."));
+}
+
 function makeQuickHelp(): string {
   return [
-    "Как пользоваться:",
-    "1) Жди сигнал с кнопками.",
-    "2) Повторил -> отправь /fill или /fillsum.",
-    "3) Игнор -> просто пропуск сигнала.",
+    "Быстрый сценарий:",
+    "1) Дождись сигнала и нажми кнопку.",
+    "2) Повторил -> нажми кнопку ввода и отправь 2 числа.",
+    "3) Игнор -> ничего дополнительно делать не нужно.",
     "",
     "Команды:",
     "/fill <signalId> <price> <qty>",
     "/fillsum <signalId> <price> <amountRub>",
-    "/testsignal"
+    "/testsignal",
+    "/help"
   ].join("\n");
 }
 
@@ -33,6 +47,7 @@ export class SignalBot {
   private readonly accessPassword: string;
   private readonly onTestSignal?: () => Promise<void>;
   private readonly log = logger.child({ module: "bot" });
+  private readonly pendingManualEntryByChat = new Map<string, PendingManualEntry>();
 
   constructor(
     cfg: BotConfig,
@@ -56,7 +71,7 @@ export class SignalBot {
     this.bot.start(async (ctx) => {
       const chatId = ctx.chat?.id;
       if (this.isAuthorized(chatId)) {
-        await ctx.reply(`Бот активен.\n${makeQuickHelp()}`);
+        await ctx.reply(`Бот готов к работе.\n${makeQuickHelp()}`);
         return;
       }
       await ctx.reply("Доступ закрыт. Введи пароль: /auth <password>");
@@ -69,7 +84,7 @@ export class SignalBot {
       }
       const parts = msg.text.trim().split(/\s+/);
       if (parts.length < 2) {
-        await ctx.reply("Формат: /auth <password>");
+        await ctx.reply("Не хватает пароля. Формат: /auth <password>");
         return;
       }
       const chatId = ctx.chat?.id;
@@ -83,7 +98,7 @@ export class SignalBot {
           chatId: String(chatId),
           username: ctx.from?.username
         });
-        await ctx.reply("Неверный пароль.");
+        await ctx.reply("Неверный пароль. Проверь ввод и повтори попытку.");
         return;
       }
       this.db.upsertAuthorizedChat(String(chatId), ctx.from?.username);
@@ -108,14 +123,101 @@ export class SignalBot {
         return;
       }
       const signalId = Number(ctx.match[1]);
+      const chatId = ctx.chat?.id;
+      if (chatId) {
+        this.pendingManualEntryByChat.delete(String(chatId));
+      }
       await ctx.answerCbQuery();
       await ctx.reply(
         [
-          "Как зафиксировать повтор:",
-          `- По объему: /fill ${signalId} <price> <qty>`,
-          `  Пример: /fill ${signalId} 123.45 10`,
-          `- По сумме в рублях: /fillsum ${signalId} <price> <amountRub>`,
-          `  Пример: /fillsum ${signalId} 123.45 10000`
+          `Сигнал #${signalId}: зафиксируй повтор удобным способом.`,
+          "",
+          "Быстро: нажми кнопку и отправь 2 числа одним сообщением.",
+          "Например: 123.45 10",
+          "",
+          "Классический режим тоже доступен:",
+          `/fill ${signalId} <price> <qty>`,
+          `/fillsum ${signalId} <price> <amountRub>`
+        ].join("\n"),
+        Markup.inlineKeyboard([
+          [
+            Markup.button.callback("Ввести цену + объем", `manual_qty:${signalId}`),
+            Markup.button.callback("Ввести цену + сумму", `manual_sum:${signalId}`)
+          ],
+          [
+            Markup.button.callback("Шаблон /fill", `template_fill:${signalId}`),
+            Markup.button.callback("Шаблон /fillsum", `template_fillsum:${signalId}`)
+          ]
+        ])
+      );
+    });
+
+    this.bot.action(/^manual_qty:(\d+)$/, async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.answerCbQuery("Нет доступа");
+        return;
+      }
+      const signalId = Number(ctx.match[1]);
+      const chatId = ctx.chat?.id;
+      if (chatId) {
+        this.pendingManualEntryByChat.set(String(chatId), { signalId, mode: "qty" });
+      }
+      await ctx.answerCbQuery("Режим объема включен");
+      await ctx.reply(
+        [
+          `Сигнал #${signalId}: отправь одним сообщением цену и объем.`,
+          "Формат: <price> <qty>",
+          "Пример: 123.45 10 (или 123,45 10)"
+        ].join("\n")
+      );
+    });
+
+    this.bot.action(/^manual_sum:(\d+)$/, async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.answerCbQuery("Нет доступа");
+        return;
+      }
+      const signalId = Number(ctx.match[1]);
+      const chatId = ctx.chat?.id;
+      if (chatId) {
+        this.pendingManualEntryByChat.set(String(chatId), { signalId, mode: "sum" });
+      }
+      await ctx.answerCbQuery("Режим суммы включен");
+      await ctx.reply(
+        [
+          `Сигнал #${signalId}: отправь одним сообщением цену и сумму в рублях.`,
+          "Формат: <price> <amountRub>",
+          "Пример: 123.45 10000 (или 123,45 10000)"
+        ].join("\n")
+      );
+    });
+
+    this.bot.action(/^template_fill:(\d+)$/, async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.answerCbQuery("Нет доступа");
+        return;
+      }
+      const signalId = Number(ctx.match[1]);
+      await ctx.answerCbQuery("Шаблон отправлен");
+      await ctx.reply(
+        [
+          "Скопируй и подставь свои значения:",
+          `/fill ${signalId} 123.45 10`
+        ].join("\n")
+      );
+    });
+
+    this.bot.action(/^template_fillsum:(\d+)$/, async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.answerCbQuery("Нет доступа");
+        return;
+      }
+      const signalId = Number(ctx.match[1]);
+      await ctx.answerCbQuery("Шаблон отправлен");
+      await ctx.reply(
+        [
+          "Скопируй и подставь свои значения:",
+          `/fillsum ${signalId} 123.45 10000`
         ].join("\n")
       );
     });
@@ -147,14 +249,24 @@ export class SignalBot {
       }
       const parts = msg.text.trim().split(/\s+/);
       if (parts.length < 4) {
-        await ctx.reply("Формат: /fill <signalId> <price> <qty>");
+        await ctx.reply(
+          [
+            "Нужны 3 параметра: signalId, price, qty.",
+            "Формат: /fill <signalId> <price> <qty>",
+            "Пример: /fill 12 123.45 10"
+          ].join("\n")
+        );
         return;
       }
       const signalId = Number(parts[1]);
-      const manualPrice = Number(parts[2]);
-      const manualQty = Number(parts[3]);
+      const manualPrice = parseLocaleNumber(parts[2]);
+      const manualQty = parseLocaleNumber(parts[3]);
       if (!Number.isFinite(signalId) || !Number.isFinite(manualPrice) || !Number.isFinite(manualQty)) {
-        await ctx.reply("Ошибка формата. Пример: /fill 12 123.45 10");
+        await ctx.reply("Проверь значения: signalId, price и qty должны быть числами. Пример: /fill 12 123.45 10 или /fill 12 123,45 10");
+        return;
+      }
+      if (manualPrice <= 0 || manualQty <= 0) {
+        await ctx.reply("Цена и объем должны быть больше 0.");
         return;
       }
 
@@ -166,7 +278,7 @@ export class SignalBot {
         manualQty
       });
       this.analytics.runPendingCalculations();
-      await ctx.reply(`Сигнал #${signalId}: повтор подтвержден по цене ${manualPrice}, объем ${manualQty}`);
+      await ctx.reply(`Сигнал #${signalId}: повтор подтвержден. Цена ${manualPrice}, объем ${round2(manualQty)}.`);
     });
 
     this.bot.command("fillsum", async (ctx) => {
@@ -180,14 +292,22 @@ export class SignalBot {
       }
       const parts = msg.text.trim().split(/\s+/);
       if (parts.length < 4) {
-        await ctx.reply("Формат: /fillsum <signalId> <price> <amountRub>");
+        await ctx.reply(
+          [
+            "Нужны 3 параметра: signalId, price, amountRub.",
+            "Формат: /fillsum <signalId> <price> <amountRub>",
+            "Пример: /fillsum 12 123.45 10000"
+          ].join("\n")
+        );
         return;
       }
       const signalId = Number(parts[1]);
-      const manualPrice = Number(parts[2]);
-      const amountRub = Number(parts[3]);
+      const manualPrice = parseLocaleNumber(parts[2]);
+      const amountRub = parseLocaleNumber(parts[3]);
       if (!Number.isFinite(signalId) || !Number.isFinite(manualPrice) || !Number.isFinite(amountRub)) {
-        await ctx.reply("Ошибка формата. Пример: /fillsum 12 123.45 10000");
+        await ctx.reply(
+          "Проверь значения: signalId, price и amountRub должны быть числами. Пример: /fillsum 12 123.45 10000 или /fillsum 12 123,45 10000"
+        );
         return;
       }
       if (manualPrice <= 0 || amountRub <= 0) {
@@ -205,7 +325,7 @@ export class SignalBot {
       });
       this.analytics.runPendingCalculations();
       await ctx.reply(
-        `Сигнал #${signalId}: повтор подтвержден по цене ${manualPrice}, сумма ${round2(amountRub)} RUB, объем ${round2(manualQty)}`
+        `Сигнал #${signalId}: повтор подтвержден. Цена ${manualPrice}, сумма ${formatRub(amountRub)}, объем ${round2(manualQty)}.`
       );
     });
 
@@ -221,6 +341,75 @@ export class SignalBot {
       await this.onTestSignal();
       await ctx.reply("Тестовый сигнал отправлен.");
     });
+
+    this.bot.on("text", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        return;
+      }
+      const msg = ctx.message;
+      if (!msg || !("text" in msg)) {
+        return;
+      }
+      const text = msg.text.trim();
+      if (text.startsWith("/")) {
+        return;
+      }
+      const chatId = ctx.chat?.id;
+      if (!chatId) {
+        return;
+      }
+      const pending = this.pendingManualEntryByChat.get(String(chatId));
+      if (!pending) {
+        return;
+      }
+      const parts = text.split(/\s+/);
+      if (parts.length < 2) {
+        await ctx.reply("Нужно 2 числа через пробел. Пример: 123.45 10 или 123,45 10");
+        return;
+      }
+      const manualPrice = parseLocaleNumber(parts[0]);
+      const secondValue = parseLocaleNumber(parts[1]);
+      if (!Number.isFinite(manualPrice) || !Number.isFinite(secondValue)) {
+        await ctx.reply("Не удалось распознать числа. Пример: 123.45 10 или 123,45 10");
+        return;
+      }
+      if (manualPrice <= 0 || secondValue <= 0) {
+        await ctx.reply("Цена и второе значение должны быть больше 0.");
+        return;
+      }
+
+      if (pending.mode === "qty") {
+        const manualQty = secondValue;
+        this.db.recordAction({
+          signalId: pending.signalId,
+          action: "repeat",
+          actionTime: new Date().toISOString(),
+          manualPrice,
+          manualQty
+        });
+        this.analytics.runPendingCalculations();
+        this.pendingManualEntryByChat.delete(String(chatId));
+        await ctx.reply(
+          `Сигнал #${pending.signalId}: повтор подтвержден. Цена ${manualPrice}, объем ${round2(manualQty)}.`
+        );
+        return;
+      }
+
+      const amountRub = secondValue;
+      const manualQty = amountRub / manualPrice;
+      this.db.recordAction({
+        signalId: pending.signalId,
+        action: "repeat",
+        actionTime: new Date().toISOString(),
+        manualPrice,
+        manualQty
+      });
+      this.analytics.runPendingCalculations();
+      this.pendingManualEntryByChat.delete(String(chatId));
+      await ctx.reply(
+        `Сигнал #${pending.signalId}: повтор подтвержден. Цена ${manualPrice}, сумма ${formatRub(amountRub)}, объем ${round2(manualQty)}.`
+      );
+    });
   }
 
   async launch() {
@@ -235,14 +424,17 @@ export class SignalBot {
     const recommendedQty = this.analytics.calcRecommendedQty(signal.signalQty);
     const accountLine = signal.accountLabel ? `Счет: ${signal.accountLabel}` : null;
     const text = [
-      `Новый сигнал #${signalId}`,
-      `${signal.ticker} | ${signal.side.toUpperCase()}`,
+      `Сигнал #${signalId}`,
+      `Инструмент: ${signal.ticker}`,
+      `Действие: ${signal.side.toUpperCase()}`,
       ...(accountLine ? [accountLine] : []),
       `Цена сигнала: ${round2(signal.signalPrice)}`,
-      `Объем сигнала: ${signal.signalQty}`,
+      `Объем в сигнале: ${signal.signalQty}`,
       `Рекомендованный объем: ${recommendedQty}`,
       "",
-      "Нажми: Повторил / Игнор"
+      "Действие за 5 секунд:",
+      "1) Повторил -> нажми кнопку и отправь 2 числа",
+      "2) Игнор -> просто нажми кнопку Игнор"
     ].join("\n");
 
     await this.bot.telegram.sendMessage(
@@ -260,12 +452,12 @@ export class SignalBot {
   async sendDailyDigest(chatId: string): Promise<void> {
     const sum = this.db.getDailySummary();
     const text = [
-      "Итоги за 24ч",
+      "Итоги за 24 часа",
       `Сигналов: ${sum.totalSignals}`,
       `Повторено: ${sum.repeated}, Игнор: ${sum.ignored}`,
-      `Сэкономлено комиссии: ${round2(sum.totalCommissionSaved)}`,
-      `Потери/выгода от проскальзывания: ${round2(sum.totalSlippageCost)}`,
-      `Net effect: ${round2(sum.totalNetEffect)}`
+      `Сэкономлено на комиссии: ${formatRub(sum.totalCommissionSaved)}`,
+      `Эффект проскальзывания: ${formatRub(sum.totalSlippageCost)}`,
+      `Чистый эффект: ${formatRub(sum.totalNetEffect)}`
     ].join("\n");
     await this.bot.telegram.sendMessage(chatId, text);
   }
