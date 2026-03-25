@@ -56,7 +56,7 @@ function makeSource(): DealsSource {
         accountId: env.TINKOFF_ACCOUNT_ID
       });
     } else {
-      appLogger.info("tinkoff.account_auto_pick", "Account id not set, source will auto-pick active account");
+      appLogger.info("tinkoff.accounts_auto_pick", "Account id not set, source will use all active accounts");
     }
     return new TinkoffDealsSource(env.TINKOFF_TOKEN, {
       accountId: env.TINKOFF_ACCOUNT_ID,

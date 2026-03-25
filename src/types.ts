@@ -11,6 +11,8 @@ export type DealSignal = {
   signalPrice: number;
   signalQty: number;
   signalTime: string;
+  accountId?: string;
+  accountLabel?: string;
 };
 
 export type ActionInput = {

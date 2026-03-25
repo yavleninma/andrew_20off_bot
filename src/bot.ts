@@ -233,9 +233,11 @@ export class SignalBot {
 
   async sendSignal(chatId: string, signal: DealSignal, signalId: number): Promise<void> {
     const recommendedQty = this.analytics.calcRecommendedQty(signal.signalQty);
+    const accountLine = signal.accountLabel ? `Счет: ${signal.accountLabel}` : null;
     const text = [
       `Новый сигнал #${signalId}`,
       `${signal.ticker} | ${signal.side.toUpperCase()}`,
+      ...(accountLine ? [accountLine] : []),
       `Цена сигнала: ${round2(signal.signalPrice)}`,
       `Объем сигнала: ${signal.signalQty}`,
       `Рекомендованный объем: ${recommendedQty}`,
