@@ -8,6 +8,21 @@ type BotConfig = {
   token: string;
   accessPassword: string;
   onTestSignal?: () => Promise<void>;
+  getRecentSourceOperations?: (limit: number) => Promise<Array<{
+    accountId?: string;
+    accountLabel?: string;
+    ticker?: string;
+    figi?: string;
+    operationType?: string;
+    operationLabel?: string;
+    side?: "buy" | "sell" | null;
+    quantity?: number;
+    price?: number;
+    date?: string;
+    description?: string;
+    signalEligible: boolean;
+    skipReason?: string;
+  }>>;
 };
 
 type PendingManualEntry = {
@@ -62,6 +77,7 @@ function makeQuickHelp(): string {
     "/fill <signalId> <price> <qty>",
     "/fillsum <signalId> <price> <amountRub>",
     "/history [count]",
+    "/lastops [count]",
     "/testsignal",
     "/help"
   ].join("\n");
@@ -71,6 +87,7 @@ export class SignalBot {
   private readonly bot: Telegraf;
   private readonly accessPassword: string;
   private readonly onTestSignal?: () => Promise<void>;
+  private readonly getRecentSourceOperations?: BotConfig["getRecentSourceOperations"];
   private readonly log = logger.child({ module: "bot" });
   private readonly pendingManualEntryByChat = new Map<string, PendingManualEntry>();
 
@@ -82,6 +99,7 @@ export class SignalBot {
     this.bot = new Telegraf(cfg.token);
     this.accessPassword = cfg.accessPassword;
     this.onTestSignal = cfg.onTestSignal;
+    this.getRecentSourceOperations = cfg.getRecentSourceOperations;
     this.setupHandlers();
   }
 
@@ -175,6 +193,50 @@ export class SignalBot {
       }).join("\n\n");
 
       await ctx.reply(`Последние сигналы (${rows.length}):\n\n${text}`);
+    });
+
+    this.bot.command("lastops", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.reply("Нет доступа. Сначала: /auth <password>");
+        return;
+      }
+      if (!this.getRecentSourceOperations) {
+        await ctx.reply("Источник не поддерживает просмотр сырых операций.");
+        return;
+      }
+
+      const msg = ctx.message;
+      const rawCount = msg && "text" in msg ? msg.text.trim().split(/\s+/)[1] : undefined;
+      const parsedCount = rawCount ? Number(rawCount) : 10;
+      const limit = Number.isFinite(parsedCount) ? Math.min(Math.max(Math.trunc(parsedCount), 1), 20) : 10;
+
+      try {
+        const rows = await this.getRecentSourceOperations(limit);
+        if (rows.length === 0) {
+          await ctx.reply("Источник не вернул последних операций.");
+          return;
+        }
+
+        const text = rows.map((row, index) => {
+          const parts = [
+            `${index + 1}. ${row.ticker ?? row.figi ?? "UNKNOWN"} ${row.side ? row.side.toUpperCase() : "NO_SIDE"}`,
+            row.date ? `${formatHistoryTime(row.date)} | сигнал: ${row.signalEligible ? "yes" : "no"}` : `сигнал: ${row.signalEligible ? "yes" : "no"}`,
+            row.accountLabel ? `счет: ${row.accountLabel}` : null,
+            row.operationType ? `тип: ${row.operationType}` : null,
+            row.operationLabel ? `операция: ${row.operationLabel}` : null,
+            row.price != null ? `цена: ${round2(row.price)}` : null,
+            row.quantity != null ? `объем: ${round2(row.quantity)}` : null,
+            row.skipReason ? `причина skip: ${row.skipReason}` : null,
+            row.description ? `описание: ${row.description}` : null
+          ].filter(Boolean);
+          return parts.join("\n");
+        }).join("\n\n");
+
+        await ctx.reply(`Последние операции из источника (${rows.length}):\n\n${text}`);
+      } catch (err) {
+        this.log.error("telegram.lastops_failed", "Failed to load recent source operations", { error: err });
+        await ctx.reply("Не удалось получить последние операции из источника.");
+      }
     });
 
     this.bot.action(/^repeat:(\d+)$/, async (ctx) => {

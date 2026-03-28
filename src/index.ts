@@ -101,7 +101,10 @@ async function main() {
     {
       token: env.TELEGRAM_BOT_TOKEN,
       accessPassword: env.BOT_ACCESS_PASSWORD,
-      onTestSignal: emitTestSignal
+      onTestSignal: emitTestSignal,
+      getRecentSourceOperations: source.getRecentOperations
+        ? (limit: number) => source.getRecentOperations!(limit)
+        : undefined
     },
     db,
     analytics

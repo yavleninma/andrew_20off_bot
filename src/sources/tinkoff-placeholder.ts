@@ -2,7 +2,7 @@ import { TinkoffInvestApi } from "tinkoff-invest-api";
 import { InstrumentIdType } from "tinkoff-invest-api/dist/generated/instruments.js";
 import { OperationState, OperationType, operationTypeToJSON } from "tinkoff-invest-api/dist/generated/operations.js";
 import type { DealSignal } from "../types.js";
-import type { DealsSource } from "./base.js";
+import type { DealsSource, SourceDebugOperation } from "./base.js";
 import { logger } from "../logger.js";
 
 type TinkoffSourceConfig = {
@@ -145,6 +145,67 @@ export class TinkoffDealsSource implements DealsSource {
       limit: 200,
       withoutCommissions: true
     });
+  }
+
+  async getRecentOperations(limit: number): Promise<SourceDebugOperation[]> {
+    const accounts = await this.getTargetAccounts();
+    const collected: SourceDebugOperation[] = [];
+
+    for (const account of accounts) {
+      const res = await this.api.operations.getOperationsByCursor({
+        accountId: account.id,
+        from: toIsoDateBefore(this.cfg.lookbackMinutes),
+        state: OperationState.OPERATION_STATE_EXECUTED,
+        operationTypes: ALL_OPERATION_TYPES,
+        limit: Math.min(Math.max(limit, 1), 50),
+        withoutCommissions: false
+      });
+
+      for (const item of res.items ?? []) {
+        if (collected.length >= limit) {
+          break;
+        }
+
+        const operationType = getOperationTypeName(item.type);
+        const side = toSide(item.type);
+        const quantity = item.quantityDone || item.quantity || 0;
+        const price = item.price ? this.api.helpers.toNumber(item.price) : undefined;
+        let skipReason: string | undefined;
+
+        if (!side) {
+          skipReason = `unsupported:${operationType}`;
+        } else if (!quantity) {
+          skipReason = `empty_qty:${operationType}`;
+        } else if (!price) {
+          skipReason = `empty_price:${operationType}`;
+        }
+
+        const ticker = item.figi ? await this.resolveTicker(item.figi) : undefined;
+        collected.push({
+          accountId: account.id,
+          accountLabel: account.label,
+          ticker,
+          figi: item.figi || undefined,
+          operationType,
+          operationLabel: item.name || undefined,
+          side,
+          quantity,
+          price,
+          date: item.date ? item.date.toISOString() : undefined,
+          description: item.description || undefined,
+          signalEligible: !skipReason,
+          skipReason
+        });
+      }
+
+      if (collected.length >= limit) {
+        break;
+      }
+    }
+
+    return collected
+      .sort((a, b) => new Date(b.date ?? 0).getTime() - new Date(a.date ?? 0).getTime())
+      .slice(0, limit);
   }
 
   async pollNewDeals(): Promise<DealSignal[]> {
