@@ -12,6 +12,20 @@ export type SignalRow = {
   signalQty: number;
   signalTime: string;
   status: SignalStatus;
+  accountLabel: string | null;
+  operationType: string | null;
+  operationLabel: string | null;
+  sourceDescription: string | null;
+};
+
+export type SignalHistoryRow = SignalRow & {
+  userAction: "repeat" | "ignore" | null;
+  manualPrice: number | null;
+  manualQty: number | null;
+  actionTime: string | null;
+  commissionSaved: number | null;
+  slippageCost: number | null;
+  netEffect: number | null;
 };
 
 export type MetricRow = {
@@ -42,6 +56,10 @@ export class AppDb {
         signalPrice REAL NOT NULL,
         signalQty REAL NOT NULL,
         signalTime TEXT NOT NULL,
+        accountLabel TEXT,
+        operationType TEXT,
+        operationLabel TEXT,
+        sourceDescription TEXT,
         status TEXT NOT NULL DEFAULT 'new',
         createdAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
@@ -74,14 +92,27 @@ export class AppDb {
         addedAt TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+
+    this.ensureSignalsColumn("accountLabel", "TEXT");
+    this.ensureSignalsColumn("operationType", "TEXT");
+    this.ensureSignalsColumn("operationLabel", "TEXT");
+    this.ensureSignalsColumn("sourceDescription", "TEXT");
+  }
+
+  private ensureSignalsColumn(columnName: string, columnDef: string): void {
+    const columns = this.db.prepare("PRAGMA table_info(signals)").all() as Array<{ name: string }>;
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+    this.db.exec(`ALTER TABLE signals ADD COLUMN ${columnName} ${columnDef}`);
   }
 
   upsertSignal(signal: DealSignal): number | null {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO signals (
-        sourceDealId, ticker, side, signalPrice, signalQty, signalTime, status
+        sourceDealId, ticker, side, signalPrice, signalQty, signalTime, accountLabel, operationType, operationLabel, sourceDescription, status
       ) VALUES (
-        @sourceDealId, @ticker, @side, @signalPrice, @signalQty, @signalTime, 'new'
+        @sourceDealId, @ticker, @side, @signalPrice, @signalQty, @signalTime, @accountLabel, @operationType, @operationLabel, @sourceDescription, 'new'
       )
     `);
     const info = stmt.run(signal);
@@ -101,6 +132,34 @@ export class AppDb {
     return this.db
       .prepare("SELECT * FROM signals WHERE sourceDealId = ?")
       .get(sourceDealId) as SignalRow | undefined;
+  }
+
+  getRecentSignals(limit: number): SignalHistoryRow[] {
+    return this.db
+      .prepare(`
+        SELECT
+          s.*,
+          a.userAction AS userAction,
+          a.manualPrice AS manualPrice,
+          a.manualQty AS manualQty,
+          a.actionTime AS actionTime,
+          m.commissionSaved AS commissionSaved,
+          m.slippageCost AS slippageCost,
+          m.netEffect AS netEffect
+        FROM signals s
+        LEFT JOIN actions a
+          ON a.id = (
+            SELECT a2.id
+            FROM actions a2
+            WHERE a2.signalId = s.id
+            ORDER BY datetime(a2.actionTime) DESC, a2.id DESC
+            LIMIT 1
+          )
+        LEFT JOIN metrics m ON m.signalId = s.id
+        ORDER BY datetime(s.signalTime) DESC, s.id DESC
+        LIMIT ?
+      `)
+      .all(limit) as SignalHistoryRow[];
   }
 
   recordAction(input: ActionInput): void {

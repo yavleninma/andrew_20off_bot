@@ -13,6 +13,9 @@ export type DealSignal = {
   signalTime: string;
   accountId?: string;
   accountLabel?: string;
+  operationType?: string;
+  operationLabel?: string;
+  sourceDescription?: string;
 };
 
 export type ActionInput = {

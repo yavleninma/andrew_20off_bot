@@ -1,6 +1,6 @@
 import { TinkoffInvestApi } from "tinkoff-invest-api";
 import { InstrumentIdType } from "tinkoff-invest-api/dist/generated/instruments.js";
-import { OperationState, OperationType } from "tinkoff-invest-api/dist/generated/operations.js";
+import { OperationState, OperationType, operationTypeToJSON } from "tinkoff-invest-api/dist/generated/operations.js";
 import type { DealSignal } from "../types.js";
 import type { DealsSource } from "./base.js";
 import { logger } from "../logger.js";
@@ -16,6 +16,21 @@ type SourceAccount = {
   label: string;
 };
 
+const SIDE_BY_OPERATION_TYPE = new Map<OperationType, "buy" | "sell">([
+  [OperationType.OPERATION_TYPE_BUY, "buy"],
+  [OperationType.OPERATION_TYPE_BUY_CARD, "buy"],
+  [OperationType.OPERATION_TYPE_BUY_MARGIN, "buy"],
+  [OperationType.OPERATION_TYPE_DELIVERY_BUY, "buy"],
+  [OperationType.OPERATION_TYPE_SELL, "sell"],
+  [OperationType.OPERATION_TYPE_SELL_CARD, "sell"],
+  [OperationType.OPERATION_TYPE_SELL_MARGIN, "sell"],
+  [OperationType.OPERATION_TYPE_DELIVERY_SELL, "sell"]
+]);
+
+const ALL_OPERATION_TYPES = Object.values(OperationType)
+  .filter((value): value is OperationType => typeof value === "number")
+  .filter((value) => value !== OperationType.OPERATION_TYPE_UNSPECIFIED && value !== OperationType.UNRECOGNIZED);
+
 function buildAccountLabel(accountId: string, accountName?: string): string {
   const cleanedName = accountName?.trim();
   if (cleanedName) {
@@ -29,33 +44,12 @@ function toIsoDateBefore(minutes: number): Date {
   return new Date(Date.now() - minutes * 60 * 1000);
 }
 
-function isTradeOperation(type: OperationType): boolean {
-  return (
-    type === OperationType.OPERATION_TYPE_BUY ||
-    type === OperationType.OPERATION_TYPE_BUY_CARD ||
-    type === OperationType.OPERATION_TYPE_BUY_MARGIN ||
-    type === OperationType.OPERATION_TYPE_SELL ||
-    type === OperationType.OPERATION_TYPE_SELL_CARD ||
-    type === OperationType.OPERATION_TYPE_SELL_MARGIN
-  );
+function toSide(type: OperationType): "buy" | "sell" | null {
+  return SIDE_BY_OPERATION_TYPE.get(type) ?? null;
 }
 
-function toSide(type: OperationType): "buy" | "sell" | null {
-  if (
-    type === OperationType.OPERATION_TYPE_BUY ||
-    type === OperationType.OPERATION_TYPE_BUY_CARD ||
-    type === OperationType.OPERATION_TYPE_BUY_MARGIN
-  ) {
-    return "buy";
-  }
-  if (
-    type === OperationType.OPERATION_TYPE_SELL ||
-    type === OperationType.OPERATION_TYPE_SELL_CARD ||
-    type === OperationType.OPERATION_TYPE_SELL_MARGIN
-  ) {
-    return "sell";
-  }
-  return null;
+function getOperationTypeName(type: OperationType): string {
+  return operationTypeToJSON(type);
 }
 
 export class TinkoffDealsSource implements DealsSource {
@@ -147,14 +141,7 @@ export class TinkoffDealsSource implements DealsSource {
       cursor: this.accountCursors.get(accountId) || undefined,
       from: toIsoDateBefore(this.cfg.lookbackMinutes),
       state: OperationState.OPERATION_STATE_EXECUTED,
-      operationTypes: [
-        OperationType.OPERATION_TYPE_BUY,
-        OperationType.OPERATION_TYPE_BUY_CARD,
-        OperationType.OPERATION_TYPE_BUY_MARGIN,
-        OperationType.OPERATION_TYPE_SELL,
-        OperationType.OPERATION_TYPE_SELL_CARD,
-        OperationType.OPERATION_TYPE_SELL_MARGIN
-      ],
+      operationTypes: ALL_OPERATION_TYPES,
       limit: 200,
       withoutCommissions: true
     });
@@ -163,28 +150,36 @@ export class TinkoffDealsSource implements DealsSource {
   async pollNewDeals(): Promise<DealSignal[]> {
     const accounts = await this.getTargetAccounts();
     const out: DealSignal[] = [];
+
     for (const account of accounts) {
       const res = await this.getOpsByCursor(account.id);
       const items = res.items ?? [];
+      const skippedByReason = new Map<string, number>();
+      let emittedDeals = 0;
+
       const prevCursor = this.accountCursors.get(account.id) ?? "";
       this.accountCursors.set(account.id, res.nextCursor || prevCursor);
 
       for (const item of items) {
-        if (!isTradeOperation(item.type)) {
-          continue;
-        }
+        const operationType = getOperationTypeName(item.type);
         const side = toSide(item.type);
         if (!side) {
+          skippedByReason.set(`unsupported:${operationType}`, (skippedByReason.get(`unsupported:${operationType}`) ?? 0) + 1);
           continue;
         }
+
         const signalQty = item.quantityDone || item.quantity || 0;
         if (!signalQty) {
+          skippedByReason.set(`empty_qty:${operationType}`, (skippedByReason.get(`empty_qty:${operationType}`) ?? 0) + 1);
           continue;
         }
+
         const price = item.price ? this.api.helpers.toNumber(item.price) : 0;
         if (!price) {
+          skippedByReason.set(`empty_price:${operationType}`, (skippedByReason.get(`empty_price:${operationType}`) ?? 0) + 1);
           continue;
         }
+
         const ticker = await this.resolveTicker(item.figi);
         out.push({
           sourceDealId: `tinkoff-${account.id}-${item.cursor || item.id}`,
@@ -194,14 +189,20 @@ export class TinkoffDealsSource implements DealsSource {
           signalQty,
           signalTime: (item.date ?? new Date()).toISOString(),
           accountId: account.id,
-          accountLabel: account.label
+          accountLabel: account.label,
+          operationType,
+          operationLabel: item.name || undefined,
+          sourceDescription: item.description || undefined
         });
+        emittedDeals += 1;
       }
 
       this.log.info("tinkoff.poll_account_complete", "Polled account operations", {
         accountId: account.id,
         accountLabel: account.label,
-        fetchedItems: items.length
+        fetchedItems: items.length,
+        emittedDeals,
+        skippedSummary: Object.fromEntries(skippedByReason)
       });
     }
 

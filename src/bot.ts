@@ -27,6 +27,30 @@ function parseLocaleNumber(raw: string): number {
   return Number(raw.replace(",", "."));
 }
 
+function formatSignalStatus(status: string): string {
+  if (status === "repeated") {
+    return "повторен";
+  }
+  if (status === "ignored") {
+    return "игнор";
+  }
+  return "новый";
+}
+
+function formatHistoryTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("ru-RU", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 function makeQuickHelp(): string {
   return [
     "Быстрый сценарий:",
@@ -37,6 +61,7 @@ function makeQuickHelp(): string {
     "Команды:",
     "/fill <signalId> <price> <qty>",
     "/fillsum <signalId> <price> <amountRub>",
+    "/history [count]",
     "/testsignal",
     "/help"
   ].join("\n");
@@ -115,6 +140,41 @@ export class SignalBot {
         return;
       }
       await ctx.reply(makeQuickHelp());
+    });
+
+    this.bot.command("history", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.reply("Нет доступа. Сначала: /auth <password>");
+        return;
+      }
+      const msg = ctx.message;
+      const rawCount = msg && "text" in msg ? msg.text.trim().split(/\s+/)[1] : undefined;
+      const parsedCount = rawCount ? Number(rawCount) : 10;
+      const limit = Number.isFinite(parsedCount) ? Math.min(Math.max(Math.trunc(parsedCount), 1), 30) : 10;
+      const rows = this.db.getRecentSignals(limit);
+      if (rows.length === 0) {
+        await ctx.reply("История пока пустая.");
+        return;
+      }
+
+      const text = rows.map((row) => {
+        const parts = [
+          `#${row.id} ${row.ticker} ${row.side.toUpperCase()} ${round2(row.signalPrice)} x ${round2(row.signalQty)}`,
+          `${formatHistoryTime(row.signalTime)} | статус: ${formatSignalStatus(row.status)}`,
+          row.accountLabel ? `счет: ${row.accountLabel}` : null,
+          row.operationType ? `тип: ${row.operationType}` : null,
+          row.operationLabel ? `операция: ${row.operationLabel}` : null,
+          row.sourceDescription ? `описание: ${row.sourceDescription}` : null,
+          row.userAction ? `действие: ${row.userAction}` : null,
+          row.manualPrice != null ? `ручная цена: ${round2(row.manualPrice)}` : null,
+          row.manualQty != null ? `ручный объем: ${round2(row.manualQty)}` : null,
+          row.netEffect != null ? `эффект: ${formatRub(row.netEffect)}` : null,
+          `sourceDealId: ${row.sourceDealId}`
+        ].filter(Boolean);
+        return parts.join("\n");
+      }).join("\n\n");
+
+      await ctx.reply(`Последние сигналы (${rows.length}):\n\n${text}`);
     });
 
     this.bot.action(/^repeat:(\d+)$/, async (ctx) => {
@@ -422,12 +482,16 @@ export class SignalBot {
 
   async sendSignal(chatId: string, signal: DealSignal, signalId: number): Promise<void> {
     const recommendedQty = this.analytics.calcRecommendedQty(signal.signalQty);
+    const operationTypeLine = signal.operationType ? `Тип операции: ${signal.operationType}` : null;
+    const operationLabelLine = signal.operationLabel ? `Операция: ${signal.operationLabel}` : null;
     const accountLine = signal.accountLabel ? `Счет: ${signal.accountLabel}` : null;
     const text = [
       `Сигнал #${signalId}`,
       `Инструмент: ${signal.ticker}`,
       `Действие: ${signal.side.toUpperCase()}`,
       ...(accountLine ? [accountLine] : []),
+      ...(operationTypeLine ? [operationTypeLine] : []),
+      ...(operationLabelLine ? [operationLabelLine] : []),
       `Цена сигнала: ${round2(signal.signalPrice)}`,
       `Объем в сигнале: ${signal.signalQty}`,
       `Рекомендованный объем: ${recommendedQty}`,

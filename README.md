@@ -103,6 +103,7 @@ npm run docker:logs
 - `/start` - старт и подсказки
 - `/auth <password>` - авторизация чата
 - `/help` - быстрый сценарий и формат команд
+- `/history [count]` - последние сигналы с типом операции, статусом и деталями
 - `/testsignal` - тестовый сигнал
 - `/fill <signalId> <price> <qty>` - подтвердить повтор с количеством
 - `/fillsum <signalId> <price> <amountRub>` - подтвердить повтор с суммой в рублях
