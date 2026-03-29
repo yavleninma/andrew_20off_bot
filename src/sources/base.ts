@@ -16,8 +16,14 @@ export type SourceDebugOperation = {
   skipReason?: string;
 };
 
+export type SourceAccount = {
+  id: string;
+  label: string;
+};
+
 export interface DealsSource {
   pollNewDeals(): Promise<DealSignal[]>;
   getName(): string;
   getRecentOperations?(limit: number): Promise<SourceDebugOperation[]>;
+  getAccounts?(): Promise<SourceAccount[]>;
 }

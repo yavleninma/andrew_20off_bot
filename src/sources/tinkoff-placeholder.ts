@@ -2,18 +2,13 @@ import { TinkoffInvestApi } from "tinkoff-invest-api";
 import { InstrumentIdType } from "tinkoff-invest-api/dist/generated/instruments.js";
 import { OperationState, OperationType, operationTypeToJSON } from "tinkoff-invest-api/dist/generated/operations.js";
 import type { DealSignal } from "../types.js";
-import type { DealsSource, SourceDebugOperation } from "./base.js";
+import type { DealsSource, SourceAccount, SourceDebugOperation } from "./base.js";
 import { logger } from "../logger.js";
 
 type TinkoffSourceConfig = {
   accountId?: string;
   lookbackMinutes: number;
   skipHistoryOnStart: boolean;
-};
-
-type SourceAccount = {
-  id: string;
-  label: string;
 };
 
 const SIDE_BY_OPERATION_TYPE = new Map<OperationType, "buy" | "sell">([
@@ -73,6 +68,10 @@ export class TinkoffDealsSource implements DealsSource {
 
   getName(): string {
     return "tinkoff";
+  }
+
+  async getAccounts(): Promise<SourceAccount[]> {
+    return this.getTargetAccounts();
   }
 
   private async getTargetAccounts(): Promise<SourceAccount[]> {

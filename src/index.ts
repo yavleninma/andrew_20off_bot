@@ -19,8 +19,8 @@ const envSchema = z.object({
   SIMULATED_EMIT_MODE: z.enum(["random", "always"]).default("always"),
   TINKOFF_TOKEN: z.string().optional(),
   TINKOFF_ACCOUNT_ID: z.string().optional(),
-  TINKOFF_LOOKBACK_MINUTES: z.coerce.number().default(180),
-  TINKOFF_SKIP_HISTORY_ON_START: z.coerce.boolean().default(true),
+  TINKOFF_LOOKBACK_MINUTES: z.coerce.number().default(1440),
+  TINKOFF_SKIP_HISTORY_ON_START: z.coerce.boolean().default(false),
   DB_PATH: z.string().default("./data/app.db"),
   POLL_SECONDS: z.coerce.number().default(15),
   DAILY_DIGEST_CRON: z.string().default("0 21 * * *"),
@@ -102,6 +102,9 @@ async function main() {
       token: env.TELEGRAM_BOT_TOKEN,
       accessPassword: env.BOT_ACCESS_PASSWORD,
       onTestSignal: emitTestSignal,
+      getSourceAccounts: source.getAccounts
+        ? () => source.getAccounts!()
+        : undefined,
       getRecentSourceOperations: source.getRecentOperations
         ? (limit: number) => source.getRecentOperations!(limit)
         : undefined
