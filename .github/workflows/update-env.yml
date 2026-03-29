@@ -4,32 +4,46 @@ on:
   workflow_dispatch:
     inputs:
       tinkoff_token:
-        description: "New TINKOFF_TOKEN value"
-        required: true
+        description: "New TINKOFF_TOKEN value (leave empty to keep current)"
+        required: false
 
 jobs:
   update-env:
     runs-on: ubuntu-latest
     steps:
-      - name: Update .env and redeploy bot
+      - name: Update .env, pull latest image and redeploy
         uses: appleboy/ssh-action@v1.2.0
         env:
           NEW_TOKEN: ${{ inputs.tinkoff_token }}
           APP_PATH: ${{ secrets.SELECTEL_APP_PATH }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         with:
           host: ${{ secrets.SELECTEL_HOST }}
           username: ${{ secrets.SELECTEL_USER }}
           key: ${{ secrets.SELECTEL_SSH_KEY }}
-          envs: NEW_TOKEN,APP_PATH
+          envs: NEW_TOKEN,APP_PATH,GHCR_USERNAME,GHCR_TOKEN
           script_stop: true
           script: |
             set -e
             cd "${APP_PATH}"
-            sed -i "s|^TINKOFF_TOKEN=.*|TINKOFF_TOKEN=${NEW_TOKEN}|" .env
+            if [ -n "${NEW_TOKEN}" ]; then
+              sed -i "s|^TINKOFF_TOKEN=.*|TINKOFF_TOKEN=${NEW_TOKEN}|" .env
+            fi
             sed -i "s|^TINKOFF_ACCOUNT_ID=.*|TINKOFF_ACCOUNT_ID=|" .env
             sed -i "s|^SOURCE_MODE=.*|SOURCE_MODE=tinkoff|" .env
-            echo "=== Config applied ==="
+            echo "=== Config ==="
             grep -E "SOURCE_MODE|TINKOFF_ACCOUNT_ID|TINKOFF_LOOKBACK|TINKOFF_SKIP" .env
-            docker compose --profile prod up -d bot
+            echo ""
+            echo "=== Pulling latest image ==="
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+            OWNER_LOWER=$(echo "yavleninma" | tr '[:upper:]' '[:lower:]')
+            IMAGE="ghcr.io/${OWNER_LOWER}/andrew_20off_bot:latest"
+            docker pull "${IMAGE}"
+            sed -i "s|^BOT_IMAGE=.*|BOT_IMAGE=${IMAGE}|" .env
+            echo "BOT_IMAGE=${IMAGE}"
+            echo ""
+            echo "=== Redeploying ==="
+            BOT_IMAGE="${IMAGE}" docker compose --profile prod up -d --force-recreate bot
             sleep 8
             docker compose logs --tail=30 bot
