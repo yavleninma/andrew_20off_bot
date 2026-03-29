@@ -8,6 +8,7 @@ type BotConfig = {
   token: string;
   accessPassword: string;
   onTestSignal?: () => Promise<void>;
+  getSourceAccounts?: () => Promise<Array<{ id: string; label: string }>>;
   getRecentSourceOperations?: (limit: number) => Promise<Array<{
     accountId?: string;
     accountLabel?: string;
@@ -78,6 +79,7 @@ function makeQuickHelp(): string {
     "/fillsum <signalId> <price> <amountRub>",
     "/history [count]",
     "/lastops [count]",
+    "/accounts",
     "/testsignal",
     "/help"
   ].join("\n");
@@ -87,6 +89,7 @@ export class SignalBot {
   private readonly bot: Telegraf;
   private readonly accessPassword: string;
   private readonly onTestSignal?: () => Promise<void>;
+  private readonly getSourceAccounts?: BotConfig["getSourceAccounts"];
   private readonly getRecentSourceOperations?: BotConfig["getRecentSourceOperations"];
   private readonly log = logger.child({ module: "bot" });
   private readonly pendingManualEntryByChat = new Map<string, PendingManualEntry>();
@@ -99,6 +102,7 @@ export class SignalBot {
     this.bot = new Telegraf(cfg.token);
     this.accessPassword = cfg.accessPassword;
     this.onTestSignal = cfg.onTestSignal;
+    this.getSourceAccounts = cfg.getSourceAccounts;
     this.getRecentSourceOperations = cfg.getRecentSourceOperations;
     this.setupHandlers();
   }
@@ -208,7 +212,7 @@ export class SignalBot {
       const msg = ctx.message;
       const rawCount = msg && "text" in msg ? msg.text.trim().split(/\s+/)[1] : undefined;
       const parsedCount = rawCount ? Number(rawCount) : 10;
-      const limit = Number.isFinite(parsedCount) ? Math.min(Math.max(Math.trunc(parsedCount), 1), 20) : 10;
+      const limit = Number.isFinite(parsedCount) ? Math.min(Math.max(Math.trunc(parsedCount), 1), 50) : 10;
 
       try {
         const rows = await this.getRecentSourceOperations(limit);
@@ -236,6 +240,29 @@ export class SignalBot {
       } catch (err) {
         this.log.error("telegram.lastops_failed", "Failed to load recent source operations", { error: err });
         await ctx.reply("Не удалось получить последние операции из источника.");
+      }
+    });
+
+    this.bot.command("accounts", async (ctx) => {
+      if (!this.isAuthorized(ctx.chat?.id)) {
+        await ctx.reply("Нет доступа. Сначала: /auth <password>");
+        return;
+      }
+      if (!this.getSourceAccounts) {
+        await ctx.reply("Источник не поддерживает список счетов.");
+        return;
+      }
+      try {
+        const accounts = await this.getSourceAccounts();
+        if (accounts.length === 0) {
+          await ctx.reply("Токен не видит ни одного счета в T-Bank.");
+          return;
+        }
+        const lines = accounts.map((acc, i) => `${i + 1}. ${acc.label}\n   ID: ${acc.id}`);
+        await ctx.reply(`Счета, доступные токену (${accounts.length}):\n\n${lines.join("\n\n")}`);
+      } catch (err) {
+        this.log.error("telegram.accounts_failed", "Failed to load accounts", { error: err });
+        await ctx.reply("Не удалось получить список счетов.");
       }
     });
 
