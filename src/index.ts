@@ -20,7 +20,7 @@ const envSchema = z.object({
   TINKOFF_TOKEN: z.string().optional(),
   TINKOFF_ACCOUNT_ID: z.string().optional(),
   TINKOFF_LOOKBACK_MINUTES: z.coerce.number().default(1440),
-  TINKOFF_SKIP_HISTORY_ON_START: z.coerce.boolean().default(false),
+  TINKOFF_SKIP_HISTORY_ON_START: z.string().optional().default("false").transform((v) => v === "true" || v === "1"),
   DB_PATH: z.string().default("./data/app.db"),
   POLL_SECONDS: z.coerce.number().default(15),
   DAILY_DIGEST_CRON: z.string().default("0 21 * * *"),
