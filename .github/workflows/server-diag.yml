@@ -1,0 +1,32 @@
+name: Server diagnostics
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check running image and bot code
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_PATH: ${{ secrets.SELECTEL_APP_PATH }}
+        with:
+          host: ${{ secrets.SELECTEL_HOST }}
+          username: ${{ secrets.SELECTEL_USER }}
+          key: ${{ secrets.SELECTEL_SSH_KEY }}
+          envs: APP_PATH
+          script: |
+            cd "${APP_PATH}"
+            echo "=== Running image ==="
+            docker inspect andrew-20off-bot --format '{{.Config.Image}}'
+            echo ""
+            echo "=== /accounts handler in code ==="
+            docker exec andrew-20off-bot grep -r "accounts" dist/bot.js | head -5
+            echo ""
+            echo "=== getSourceAccounts in code ==="
+            docker exec andrew-20off-bot grep -r "getSourceAccounts" dist/bot.js | head -3
+            docker exec andrew-20off-bot grep -r "getSourceAccounts" dist/index.js | head -3
+            echo ""
+            echo "=== Last 30 lines of logs ==="
+            docker compose logs --tail=30 bot
