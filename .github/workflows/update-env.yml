@@ -1,0 +1,36 @@
+name: Update server .env
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-env:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update .env and restart bot
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          NEW_TOKEN: ${{ secrets.TINKOFF_TOKEN_NEW }}
+          APP_PATH: ${{ secrets.SELECTEL_APP_PATH }}
+        with:
+          host: ${{ secrets.SELECTEL_HOST }}
+          username: ${{ secrets.SELECTEL_USER }}
+          key: ${{ secrets.SELECTEL_SSH_KEY }}
+          envs: NEW_TOKEN,APP_PATH
+          script_stop: true
+          script: |
+            set -e
+            cd "${APP_PATH}"
+            echo "=== Current .env ==="
+            cat .env
+            echo ""
+            echo "=== Updating .env ==="
+            sed -i "s|^TINKOFF_TOKEN=.*|TINKOFF_TOKEN=${NEW_TOKEN}|" .env
+            sed -i "s|^TINKOFF_ACCOUNT_ID=.*|TINKOFF_ACCOUNT_ID=|" .env
+            sed -i "s|^SOURCE_MODE=.*|SOURCE_MODE=tinkoff|" .env
+            grep -E "TINKOFF|SOURCE_MODE" .env
+            echo ""
+            echo "=== Restarting bot ==="
+            docker compose --profile prod restart bot
+            sleep 5
+            docker compose logs --tail=60 bot
