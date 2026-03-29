@@ -6,7 +6,7 @@ import type { DealsSource, SourceAccount, SourceDebugOperation } from "./base.js
 import { logger } from "../logger.js";
 
 type TinkoffSourceConfig = {
-  accountId?: string;
+  accountIds?: string[];
   lookbackMinutes: number;
   skipHistoryOnStart: boolean;
 };
@@ -60,7 +60,7 @@ export class TinkoffDealsSource implements DealsSource {
   constructor(token: string, cfg?: Partial<TinkoffSourceConfig>) {
     this.api = new TinkoffInvestApi({ token });
     this.cfg = {
-      accountId: cfg?.accountId,
+      accountIds: cfg?.accountIds,
       lookbackMinutes: cfg?.lookbackMinutes ?? 180,
       skipHistoryOnStart: cfg?.skipHistoryOnStart ?? true
     };
@@ -91,15 +91,16 @@ export class TinkoffDealsSource implements DealsSource {
       throw new Error("Не удалось найти ни одного счета в Tinkoff API");
     }
 
-    if (this.cfg.accountId) {
-      const selected = allAccounts.find((acc) => acc.id === this.cfg.accountId);
-      if (!selected) {
-        throw new Error(`TINKOFF_ACCOUNT_ID=${this.cfg.accountId} не найден среди доступных счетов`);
+    if (this.cfg.accountIds && this.cfg.accountIds.length > 0) {
+      const selected = allAccounts.filter((acc) => this.cfg.accountIds!.includes(acc.id));
+      const missing = this.cfg.accountIds.filter((id) => !allAccounts.some((acc) => acc.id === id));
+      if (missing.length > 0) {
+        throw new Error(`TINKOFF_ACCOUNT_ID: счета не найдены в API: ${missing.join(", ")}`);
       }
-      this.accounts = [{ id: selected.id, label: selected.label }];
-      this.log.info("tinkoff.account_selected", "Using configured account", {
-        accountId: selected.id,
-        accountLabel: selected.label
+      this.accounts = selected.map((acc) => ({ id: acc.id, label: acc.label }));
+      this.log.info("tinkoff.accounts_selected_by_config", "Using configured accounts", {
+        accountIds: this.accounts.map((acc) => acc.id),
+        accountLabels: this.accounts.map((acc) => acc.label)
       });
       return this.accounts;
     }

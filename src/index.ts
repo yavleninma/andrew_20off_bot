@@ -51,15 +51,18 @@ function makeSource(): DealsSource {
     appLogger.info("tinkoff.token_loaded", "Tinkoff token loaded from env", {
       tokenMask: maskSecret(env.TINKOFF_TOKEN)
     });
-    if (env.TINKOFF_ACCOUNT_ID) {
-      appLogger.info("tinkoff.account_configured", "Account id configured via env", {
-        accountId: env.TINKOFF_ACCOUNT_ID
+    const accountIds = env.TINKOFF_ACCOUNT_ID
+      ? env.TINKOFF_ACCOUNT_ID.split(",").map((id) => id.trim()).filter(Boolean)
+      : undefined;
+    if (accountIds && accountIds.length > 0) {
+      appLogger.info("tinkoff.accounts_configured", "Account ids configured via env", {
+        accountIds
       });
     } else {
       appLogger.info("tinkoff.accounts_auto_pick", "Account id not set, source will use all active accounts");
     }
     return new TinkoffDealsSource(env.TINKOFF_TOKEN, {
-      accountId: env.TINKOFF_ACCOUNT_ID,
+      accountIds,
       lookbackMinutes: env.TINKOFF_LOOKBACK_MINUTES,
       skipHistoryOnStart: env.TINKOFF_SKIP_HISTORY_ON_START
     });
