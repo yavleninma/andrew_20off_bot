@@ -2,32 +2,34 @@ name: Update server .env
 
 on:
   workflow_dispatch:
+    inputs:
+      tinkoff_token:
+        description: "New TINKOFF_TOKEN value"
+        required: true
 
 jobs:
   update-env:
     runs-on: ubuntu-latest
     steps:
-      - name: Update .env and restart bot
+      - name: Update .env and redeploy bot
         uses: appleboy/ssh-action@v1.2.0
         env:
+          NEW_TOKEN: ${{ inputs.tinkoff_token }}
           APP_PATH: ${{ secrets.SELECTEL_APP_PATH }}
         with:
           host: ${{ secrets.SELECTEL_HOST }}
           username: ${{ secrets.SELECTEL_USER }}
           key: ${{ secrets.SELECTEL_SSH_KEY }}
-          envs: APP_PATH
+          envs: NEW_TOKEN,APP_PATH
           script_stop: true
           script: |
             set -e
             cd "${APP_PATH}"
-            sed -i "s|^TINKOFF_TOKEN=.*|TINKOFF_TOKEN=t.0xmDbvP_6fINVwdBRSdKzNGintJWFPbi939-Cc-j7CFzFJmuXqJCvimYmKquQQfC3EFyCg0VrhW7C1NkBdNmlw|" .env
+            sed -i "s|^TINKOFF_TOKEN=.*|TINKOFF_TOKEN=${NEW_TOKEN}|" .env
             sed -i "s|^TINKOFF_ACCOUNT_ID=.*|TINKOFF_ACCOUNT_ID=|" .env
             sed -i "s|^SOURCE_MODE=.*|SOURCE_MODE=tinkoff|" .env
-            echo "=== .env after update ==="
+            echo "=== Config applied ==="
             grep -E "SOURCE_MODE|TINKOFF_ACCOUNT_ID|TINKOFF_LOOKBACK|TINKOFF_SKIP" .env
-            echo ""
-            echo "=== Redeploying bot (picks up new env) ==="
             docker compose --profile prod up -d bot
             sleep 8
-            echo "=== Boot logs ==="
-            docker compose logs --tail=40 bot
+            docker compose logs --tail=30 bot
