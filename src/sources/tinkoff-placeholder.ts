@@ -30,6 +30,7 @@ const SIDE_BY_OPERATION_TYPE = new Map<OperationType, "buy" | "sell">([
 const ALL_OPERATION_TYPES = Object.values(OperationType)
   .filter((value): value is OperationType => typeof value === "number")
   .filter((value) => value !== OperationType.OPERATION_TYPE_UNSPECIFIED && value !== OperationType.UNRECOGNIZED);
+const DEBUG_LOOKBACK_MINUTES = 7 * 24 * 60;
 
 function buildAccountLabel(accountId: string, accountName?: string): string {
   const cleanedName = accountName?.trim();
@@ -154,7 +155,7 @@ export class TinkoffDealsSource implements DealsSource {
     for (const account of accounts) {
       const res = await this.api.operations.getOperationsByCursor({
         accountId: account.id,
-        from: toIsoDateBefore(this.cfg.lookbackMinutes),
+        from: toIsoDateBefore(Math.max(this.cfg.lookbackMinutes, DEBUG_LOOKBACK_MINUTES)),
         state: OperationState.OPERATION_STATE_EXECUTED,
         operationTypes: ALL_OPERATION_TYPES,
         limit: Math.min(Math.max(limit, 1), 50),
