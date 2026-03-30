@@ -15,7 +15,28 @@ async function run(): Promise<void> {
     commissionRate: 0.2
   });
 
-  analytics.calcRecommendedQty(1);
+  const now = new Date().toISOString();
+  analytics.setInitialAccountState([
+    {
+      accountId: "main",
+      accountLabel: "Main",
+      capturedAt: now,
+      totalPortfolioValue: 1000000,
+      positions: [{ ticker: "TEST", quantity: 20 }]
+    }
+  ]);
+
+  const hint = analytics.buildSizingHint({
+    accountId: "main",
+    ticker: "TEST",
+    signalPrice: 100,
+    signalQty: 20,
+    signalTime: now
+  });
+
+  if (hint.recommendedQty !== 2) {
+    throw new Error(`Smoke failed: expected recommended qty 2, got ${hint.recommendedQty}`);
+  }
 
   const source = new SimulatedDealsSource("always", "smoke");
   const deals = await source.pollNewDeals();

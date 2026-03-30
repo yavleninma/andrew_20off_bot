@@ -12,6 +12,7 @@ export type SignalRow = {
   signalQty: number;
   signalTime: string;
   status: SignalStatus;
+  accountId: string | null;
   accountLabel: string | null;
   operationType: string | null;
   operationLabel: string | null;
@@ -56,6 +57,7 @@ export class AppDb {
         signalPrice REAL NOT NULL,
         signalQty REAL NOT NULL,
         signalTime TEXT NOT NULL,
+        accountId TEXT,
         accountLabel TEXT,
         operationType TEXT,
         operationLabel TEXT,
@@ -93,6 +95,7 @@ export class AppDb {
       );
     `);
 
+    this.ensureSignalsColumn("accountId", "TEXT");
     this.ensureSignalsColumn("accountLabel", "TEXT");
     this.ensureSignalsColumn("operationType", "TEXT");
     this.ensureSignalsColumn("operationLabel", "TEXT");
@@ -110,12 +113,19 @@ export class AppDb {
   upsertSignal(signal: DealSignal): number | null {
     const stmt = this.db.prepare(`
       INSERT OR IGNORE INTO signals (
-        sourceDealId, ticker, side, signalPrice, signalQty, signalTime, accountLabel, operationType, operationLabel, sourceDescription, status
+        sourceDealId, ticker, side, signalPrice, signalQty, signalTime, accountId, accountLabel, operationType, operationLabel, sourceDescription, status
       ) VALUES (
-        @sourceDealId, @ticker, @side, @signalPrice, @signalQty, @signalTime, @accountLabel, @operationType, @operationLabel, @sourceDescription, 'new'
+        @sourceDealId, @ticker, @side, @signalPrice, @signalQty, @signalTime, @accountId, @accountLabel, @operationType, @operationLabel, @sourceDescription, 'new'
       )
     `);
-    const info = stmt.run(signal);
+    const info = stmt.run({
+      ...signal,
+      accountId: signal.accountId ?? null,
+      accountLabel: signal.accountLabel ?? null,
+      operationType: signal.operationType ?? null,
+      operationLabel: signal.operationLabel ?? null,
+      sourceDescription: signal.sourceDescription ?? null
+    });
     if (info.changes === 0) {
       return null;
     }
@@ -198,8 +208,11 @@ export class AppDb {
   getActionsWithoutMetrics(): Array<{
     signalId: number;
     side: "buy" | "sell";
+    accountId: string | null;
+    ticker: string;
     signalPrice: number;
     signalQty: number;
+    signalTime: string;
     manualPrice: number | null;
     manualQty: number | null;
     userAction: "repeat" | "ignore";
@@ -209,8 +222,11 @@ export class AppDb {
         SELECT
           a.signalId AS signalId,
           s.side AS side,
+          s.accountId AS accountId,
+          s.ticker AS ticker,
           s.signalPrice AS signalPrice,
           s.signalQty AS signalQty,
+          s.signalTime AS signalTime,
           a.manualPrice AS manualPrice,
           a.manualQty AS manualQty,
           a.userAction AS userAction
@@ -222,8 +238,11 @@ export class AppDb {
       .all() as Array<{
       signalId: number;
       side: "buy" | "sell";
+      accountId: string | null;
+      ticker: string;
       signalPrice: number;
       signalQty: number;
+      signalTime: string;
       manualPrice: number | null;
       manualQty: number | null;
       userAction: "repeat" | "ignore";

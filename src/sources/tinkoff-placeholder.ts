@@ -1,8 +1,13 @@
 import { TinkoffInvestApi } from "tinkoff-invest-api";
 import { InstrumentIdType } from "tinkoff-invest-api/dist/generated/instruments.js";
-import { OperationState, OperationType, operationTypeToJSON } from "tinkoff-invest-api/dist/generated/operations.js";
+import {
+  OperationState,
+  OperationType,
+  PortfolioRequest_CurrencyRequest,
+  operationTypeToJSON
+} from "tinkoff-invest-api/dist/generated/operations.js";
 import type { DealSignal } from "../types.js";
-import type { DealsSource, SourceAccount, SourceDebugOperation } from "./base.js";
+import type { DealsSource, SourceAccount, SourceAccountInitialState, SourceDebugOperation } from "./base.js";
 import { logger } from "../logger.js";
 
 type TinkoffSourceConfig = {
@@ -53,6 +58,7 @@ export class TinkoffDealsSource implements DealsSource {
   private readonly cfg: TinkoffSourceConfig;
   private readonly log = logger.child({ module: "source.tinkoff" });
   private accounts?: SourceAccount[];
+  private initialAccountState?: SourceAccountInitialState[];
   private readonly accountCursors = new Map<string, string>();
   private initialized = false;
   private readonly figiToTicker = new Map<string, string>();
@@ -72,6 +78,65 @@ export class TinkoffDealsSource implements DealsSource {
 
   async getAccounts(): Promise<SourceAccount[]> {
     return this.getTargetAccounts();
+  }
+
+  async getInitialAccountState(): Promise<SourceAccountInitialState[]> {
+    if (this.initialAccountState) {
+      return this.initialAccountState;
+    }
+
+    const accounts = await this.getTargetAccounts();
+    const capturedAt = new Date().toISOString();
+    const snapshots: SourceAccountInitialState[] = [];
+
+    for (const account of accounts) {
+      const portfolio = await this.api.operations.getPortfolio({
+        accountId: account.id,
+        currency: PortfolioRequest_CurrencyRequest.RUB
+      });
+
+      const positions = [];
+      for (const position of portfolio.positions ?? []) {
+        const quantityLots = position.quantityLots ? this.api.helpers.toNumber(position.quantityLots) : 0;
+        if (!quantityLots) {
+          continue;
+        }
+
+        const ticker = position.figi
+          ? await this.resolveTicker(position.figi)
+          : position.instrumentUid || "UNKNOWN";
+
+        positions.push({
+          ticker,
+          quantity: quantityLots,
+          figi: position.figi || undefined
+        });
+      }
+
+      snapshots.push({
+        accountId: account.id,
+        accountLabel: account.label,
+        capturedAt,
+        totalPortfolioValue: portfolio.totalAmountPortfolio
+          ? this.api.helpers.toNumber(portfolio.totalAmountPortfolio)
+          : undefined,
+        positions
+      });
+    }
+
+    this.initialAccountState = snapshots;
+    this.log.info("tinkoff.initial_account_state_loaded", "Loaded initial account state for sizing", {
+      accountsCount: snapshots.length,
+      accounts: snapshots.map((snapshot) => ({
+        accountId: snapshot.accountId,
+        accountLabel: snapshot.accountLabel,
+        totalPortfolioValue: snapshot.totalPortfolioValue,
+        positionsCount: snapshot.positions.length,
+        capturedAt: snapshot.capturedAt
+      }))
+    });
+
+    return snapshots;
   }
 
   private async getTargetAccounts(): Promise<SourceAccount[]> {

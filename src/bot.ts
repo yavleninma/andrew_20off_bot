@@ -39,6 +39,10 @@ function formatRub(value: number): string {
   return `${round2(value)} руб.`;
 }
 
+function formatPercent(value: number): string {
+  return `${round2(value * 100)}%`;
+}
+
 function parseLocaleNumber(raw: string): number {
   return Number(raw.replace(",", "."));
 }
@@ -570,10 +574,24 @@ export class SignalBot {
   }
 
   async sendSignal(chatId: string, signal: DealSignal, signalId: number): Promise<void> {
-    const recommendedQty = this.analytics.calcRecommendedQty(signal.signalQty);
+    const sizing = this.analytics.buildSizingHint(signal);
     const operationTypeLine = signal.operationType ? `Тип операции: ${signal.operationType}` : null;
     const operationLabelLine = signal.operationLabel ? `Операция: ${signal.operationLabel}` : null;
     const accountLine = signal.accountLabel ? `Счет: ${signal.accountLabel}` : null;
+    const sizingBasisLine = sizing.sourcePortfolioValue != null
+      ? sizing.mode === "initial_portfolio"
+        ? `Стартовая база счета: ${formatRub(sizing.sourcePortfolioValue)}${sizing.capturedAt ? ` (${formatHistoryTime(sizing.capturedAt)})` : ""}`
+        : `База для расчета объема: ${formatRub(sizing.sourcePortfolioValue)}`
+      : null;
+    const tradePercentLine = sizing.sourceTradePercent != null
+      ? `Размер сделки: ${formatPercent(sizing.sourceTradePercent)} от базы`
+      : null;
+    const startPositionLine = sizing.signalPercentOfStartPosition != null
+      ? `От стартовой позиции по ${signal.ticker}: ${formatPercent(sizing.signalPercentOfStartPosition)}`
+      : null;
+    const mirrorValueLine = sizing.mirrorTradeValue != null
+      ? `Сумма для зеркального счета: ${formatRub(sizing.mirrorTradeValue)}`
+      : null;
     const text = [
       `Сигнал #${signalId}`,
       `Инструмент: ${signal.ticker}`,
@@ -583,7 +601,11 @@ export class SignalBot {
       ...(operationLabelLine ? [operationLabelLine] : []),
       `Цена сигнала: ${round2(signal.signalPrice)}`,
       `Объем в сигнале: ${signal.signalQty}`,
-      `Рекомендованный объем: ${recommendedQty}`,
+      ...(sizingBasisLine ? [sizingBasisLine] : []),
+      ...(tradePercentLine ? [tradePercentLine] : []),
+      ...(startPositionLine ? [startPositionLine] : []),
+      ...(mirrorValueLine ? [mirrorValueLine] : []),
+      `Рекомендованный объем: ${sizing.recommendedQty}`,
       "",
       "Действие за 5 секунд:",
       "1) Повторил -> нажми кнопку и отправь 2 числа",

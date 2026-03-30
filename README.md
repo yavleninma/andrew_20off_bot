@@ -21,6 +21,7 @@ MVP-бот для Telegram, который получает сделки из и
   - `commissionSaved`,
   - `slippageCost`,
   - `netEffect`,
+  - расчет рекомендованного объема от стартового снимка счета в T-Invest с выводом сделки в процентах,
   - ежедневный digest по cron.
 
 ## Быстрый старт (самый простой путь через Docker)
@@ -122,11 +123,13 @@ npm run docker:logs
    - `SOURCE_MODE=tinkoff`
    - `TINKOFF_TOKEN=<ваш токен>`
    - опционально: `TINKOFF_ACCOUNT_ID=<id счета>`
+   - рекомендуется: `TINKOFF_SKIP_HISTORY_ON_START=true`, чтобы при старте не брать старые сделки как новые сигналы
 2. Перезапусти контейнер:
    - `npm run docker:prod`
 3. Проверь логи:
    - загрузился токен (в маске),
-   - выбран `accountId`.
+   - выбран `accountId`,
+   - загружен стартовый снимок счета для sizing.
 
 Ссылки:
 
@@ -163,8 +166,8 @@ npm run start
 - `DB_PATH` - путь к SQLite (по умолчанию `./data/app.db`)
 - `POLL_SECONDS` - интервал опроса источника
 - `DAILY_DIGEST_CRON` - cron ежедневной сводки
-- `MAIN_ACCOUNT_VALUE` - размер основного портфеля
-- `MIRROR_ACCOUNT_VALUE` - размер зеркального портфеля
+- `MAIN_ACCOUNT_VALUE` - fallback-оценка размера основного портфеля, если live-снимок счета недоступен
+- `MIRROR_ACCOUNT_VALUE` - размер зеркального портфеля, от которого считается рекомендованный объем
 - `COMMISSION_RATE` - ставка комиссии для расчета эффекта
 - `LOG_LEVEL` - уровень логирования (`debug | info | warn | error`)
 - `BOT_IMAGE` - опционально, image для `docker compose` в prod

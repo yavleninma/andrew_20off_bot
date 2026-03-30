@@ -1,6 +1,7 @@
 {
   "name": "andrew_20off_bot",
   "version": "1.0.0",
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",

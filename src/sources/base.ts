@@ -21,9 +21,24 @@ export type SourceAccount = {
   label: string;
 };
 
+export type SourceStartupPosition = {
+  ticker: string;
+  quantity: number;
+  figi?: string;
+};
+
+export type SourceAccountInitialState = {
+  accountId: string;
+  accountLabel?: string;
+  capturedAt: string;
+  totalPortfolioValue?: number;
+  positions: SourceStartupPosition[];
+};
+
 export interface DealsSource {
   pollNewDeals(): Promise<DealSignal[]>;
   getName(): string;
   getRecentOperations?(limit: number): Promise<SourceDebugOperation[]>;
   getAccounts?(): Promise<SourceAccount[]>;
+  getInitialAccountState?(): Promise<SourceAccountInitialState[]>;
 }

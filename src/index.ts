@@ -79,6 +79,20 @@ async function main() {
   });
   const source = makeSource();
 
+  if (source.getInitialAccountState) {
+    try {
+      const initialAccountState = await source.getInitialAccountState();
+      analytics.setInitialAccountState(initialAccountState);
+      appLogger.info("analytics.initial_account_state_ready", "Loaded initial account state for sizing", {
+        accountsCount: initialAccountState.length
+      });
+    } catch (err) {
+      appLogger.warn("analytics.initial_account_state_failed", "Failed to load initial account state, fallback sizing will be used", {
+        error: err
+      });
+    }
+  }
+
   const createAndSendSignal = async (deal: DealSignal) => {
     const insertedId = db.upsertSignal(deal);
     if (!insertedId) {
